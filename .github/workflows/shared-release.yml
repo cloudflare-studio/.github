@@ -252,12 +252,14 @@ jobs:
           *This issue was automatically created by the release workflow*
           EOF
           
-          # Create the issue
+          # Create the issue (labels are optional)
           gh issue create \
             --title "🚀 Release: ${PACKAGE}@${VERSION}" \
             --body-file issue-body.md \
-            --label "release,automation,dependencies" \
-            --project "Release Tracking"
+            --assignee "${{ github.repository_owner }}" || \
+          gh issue create \
+            --title "🚀 Release: ${PACKAGE}@${VERSION}" \
+            --body-file issue-body.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
