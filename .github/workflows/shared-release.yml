@@ -24,7 +24,7 @@ on:
         description: 'NPM token for publishing to npm registry'
 
 jobs:
-  release:
+  release-package:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -44,21 +44,21 @@ jobs:
           registry-url: 'https://npm.pkg.github.com'
           scope: '@cloudflare-studio'
           
-      - name: Install dependencies
+      - name: 📥 Install dependencies
         run: npm ci || npm install
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         
-      - name: Build
+      - name: 🔨 Build
         run: ${{ inputs.build-command }}
         
-      - name: Clean working directory
+      - name: 🧹 Clean working directory
         run: |
           # Remove any generated files that shouldn't be committed
           rm -rf .prompts/
           git checkout -- .
         
-      - name: Smart Version Bump
+      - name: 🔢 Smart Version Bump
         id: version
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -125,7 +125,7 @@ jobs:
             echo "bump_type=${BUMP_TYPE}" >> $GITHUB_OUTPUT
           fi
           
-      - name: Generate Comprehensive Release Notes
+      - name: 📝 Generate Comprehensive Release Notes
         id: release-notes
         if: steps.version.outputs.changed == 'true'
         run: |
@@ -189,7 +189,7 @@ jobs:
           
           echo "notes_file=release-notes.md" >> $GITHUB_OUTPUT
           
-      - name: Publish Package
+      - name: 🚀 Publish Package
         if: steps.version.outputs.changed == 'true'
         run: |
           # Publish to GitHub Packages
@@ -204,11 +204,11 @@ jobs:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
-      - name: Push changes
+      - name: 📤 Push changes
         if: steps.version.outputs.changed == 'true'
         run: git push --follow-tags
         
-      - name: Create GitHub Release
+      - name: 🎉 Create GitHub Release
         if: steps.version.outputs.changed == 'true'
         run: |
           gh release create "v${{ steps.version.outputs.version }}" \
@@ -218,7 +218,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
-      - name: Create Tracking Issue
+      - name: 📋 Create Tracking Issue
         if: steps.version.outputs.changed == 'true'
         run: |
           VERSION="${{ steps.version.outputs.version }}"
@@ -279,7 +279,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
-      - name: Notify Dependent Repositories
+      - name: 📢 Notify Dependent Repositories
         if: steps.version.outputs.changed == 'true' && inputs.dependent-repos != ''
         run: |
           VERSION="${{ steps.version.outputs.version }}"
