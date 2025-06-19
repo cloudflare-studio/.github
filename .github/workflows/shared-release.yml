@@ -68,7 +68,12 @@ jobs:
           # Check if already published
           PUBLISHED_VERSION=$(npm view ${PACKAGE_NAME} version 2>/dev/null || echo "0.0.0")
           
-          if [ "$PUBLISHED_VERSION" = "$CURRENT_VERSION" ]; then
+          # Also check if current version is already tagged
+          if git rev-parse "v${CURRENT_VERSION}" >/dev/null 2>&1; then
+            echo "Version ${CURRENT_VERSION} is already tagged"
+            echo "version=${CURRENT_VERSION}" >> $GITHUB_OUTPUT
+            echo "changed=false" >> $GITHUB_OUTPUT
+          elif [ "$PUBLISHED_VERSION" = "$CURRENT_VERSION" ]; then
             # Need to bump version
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -96,10 +101,18 @@ jobs:
             # Set the final version
             npm version $NEW_VERSION --no-git-tag-version
             
-            # Commit and tag
+            # Commit and tag (only if there are changes)
             git add package.json package-lock.json
-            git commit -m "chore: release ${NEW_VERSION} [skip ci]"
-            git tag -a "v${NEW_VERSION}" -m "Release v${NEW_VERSION}"
+            if ! git diff --cached --quiet; then
+              git commit -m "chore: release ${NEW_VERSION} [skip ci]"
+              git tag -a "v${NEW_VERSION}" -m "Release v${NEW_VERSION}"
+            else
+              echo "No changes to commit - version already at ${NEW_VERSION}"
+              # Still create the tag if it doesn't exist
+              if ! git rev-parse "v${NEW_VERSION}" >/dev/null 2>&1; then
+                git tag -a "v${NEW_VERSION}" -m "Release v${NEW_VERSION}"
+              fi
+            fi
             
             echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
             echo "changed=true" >> $GITHUB_OUTPUT
