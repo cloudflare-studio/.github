@@ -1,0 +1,283 @@
+name: Shared Release Workflow
+# This is a reusable workflow for all cloudflare-studio packages
+
+on:
+  workflow_call:
+    inputs:
+      package-name:
+        required: true
+        type: string
+        description: 'NPM package name (e.g., @cloudflare-studio/cli)'
+      build-command:
+        required: false
+        type: string
+        default: 'npm run build'
+        description: 'Command to build the package'
+      dependent-repos:
+        required: false
+        type: string
+        default: ''
+        description: 'Comma-separated list of dependent repos to notify'
+    secrets:
+      NPM_TOKEN:
+        required: false
+        description: 'NPM token for publishing to npm registry'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      issues: write
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@cloudflare-studio'
+          
+      - name: Install dependencies
+        run: npm ci || npm install
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        
+      - name: Build
+        run: ${{ inputs.build-command }}
+        
+      - name: Clean working directory
+        run: |
+          # Remove any generated files that shouldn't be committed
+          rm -rf .prompts/
+          git checkout -- .
+        
+      - name: Smart Version Bump
+        id: version
+        run: |
+          # Get current version
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          PACKAGE_NAME="${{ inputs.package-name }}"
+          
+          # Check if already published
+          PUBLISHED_VERSION=$(npm view ${PACKAGE_NAME} version 2>/dev/null || echo "0.0.0")
+          
+          if [ "$PUBLISHED_VERSION" = "$CURRENT_VERSION" ]; then
+            # Need to bump version
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            
+            # Analyze commits to determine version bump type
+            BUMP_TYPE="patch"
+            if git log -1 --pretty=%B | grep -q "^feat:"; then
+              BUMP_TYPE="minor"
+            fi
+            if git log -1 --pretty=%B | grep -q "^BREAKING CHANGE:\|^feat!:"; then
+              BUMP_TYPE="major"
+            fi
+            
+            # Get base version
+            BASE_VERSION=$(echo $CURRENT_VERSION | sed 's/-.*$//')
+            
+            # Bump version
+            npm version $BUMP_TYPE --no-git-tag-version
+            NEW_BASE=$(node -p "require('./package.json').version")
+            
+            # Add date stamp with time for uniqueness
+            DATE_STAMP=$(date -u +%Y%m%d.%H%M)
+            NEW_VERSION="${NEW_BASE}-${DATE_STAMP}"
+            
+            # Set the final version
+            npm version $NEW_VERSION --no-git-tag-version
+            
+            # Commit and tag
+            git add package.json package-lock.json
+            git commit -m "chore: release ${NEW_VERSION} [skip ci]"
+            git tag -a "v${NEW_VERSION}" -m "Release v${NEW_VERSION}"
+            
+            echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+            echo "changed=true" >> $GITHUB_OUTPUT
+            echo "bump_type=${BUMP_TYPE}" >> $GITHUB_OUTPUT
+          else
+            echo "version=${CURRENT_VERSION}" >> $GITHUB_OUTPUT
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+          
+      - name: Generate Comprehensive Release Notes
+        id: release-notes
+        if: steps.version.outputs.changed == 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          
+          # Categorize commits
+          if [ -n "$PREVIOUS_TAG" ]; then
+            FEAT_COMMITS=$(git log ${PREVIOUS_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges | grep "^- feat:" || true)
+            FIX_COMMITS=$(git log ${PREVIOUS_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges | grep "^- fix:" || true)
+            OTHER_COMMITS=$(git log ${PREVIOUS_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges | grep -v "^- feat:\|^- fix:\|skip ci" || true)
+          else
+            FEAT_COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges | grep "^- feat:" | head -10 || true)
+            FIX_COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges | grep "^- fix:" | head -10 || true)
+            OTHER_COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges | grep -v "^- feat:\|^- fix:\|skip ci" | head -10 || true)
+          fi
+          
+          # Create release notes
+          cat > release-notes.md << EOF
+          ## 🎉 Release v${VERSION}
+          
+          ### 📦 Package: ${{ inputs.package-name }}
+          
+          EOF
+          
+          if [ -n "$FEAT_COMMITS" ]; then
+            echo "### ✨ Features" >> release-notes.md
+            echo "$FEAT_COMMITS" >> release-notes.md
+            echo "" >> release-notes.md
+          fi
+          
+          if [ -n "$FIX_COMMITS" ]; then
+            echo "### 🐛 Bug Fixes" >> release-notes.md
+            echo "$FIX_COMMITS" >> release-notes.md
+            echo "" >> release-notes.md
+          fi
+          
+          if [ -n "$OTHER_COMMITS" ]; then
+            echo "### 📝 Other Changes" >> release-notes.md
+            echo "$OTHER_COMMITS" >> release-notes.md
+            echo "" >> release-notes.md
+          fi
+          
+          cat >> release-notes.md << EOF
+          
+          ### 📊 Metadata
+          - **Version Bump**: ${{ steps.version.outputs.bump_type }}
+          - **Release Date**: $(date -u +"%Y-%m-%d %H:%M UTC")
+          - **Build ID**: [${{ github.run_id }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+          - **Commit**: [\`${GITHUB_SHA:0:7}\`](${{ github.server_url }}/${{ github.repository }}/commit/${GITHUB_SHA})
+          
+          ### 📥 Installation
+          \`\`\`bash
+          # From GitHub Packages
+          npm install ${{ inputs.package-name }}@${VERSION}
+          \`\`\`
+          
+          ---
+          *This release was automatically generated by the cfstudio release workflow*
+          EOF
+          
+          echo "notes_file=release-notes.md" >> $GITHUB_OUTPUT
+          
+      - name: Publish Package
+        if: steps.version.outputs.changed == 'true'
+        run: |
+          # Publish to GitHub Packages
+          npm publish --access restricted
+          
+          # If NPM_TOKEN is provided, also publish to npm
+          if [ -n "${{ secrets.NPM_TOKEN }}" ]; then
+            echo "//registry.npmjs.org/:_authToken=${{ secrets.NPM_TOKEN }}" >> ~/.npmrc
+            npm publish --access public --registry https://registry.npmjs.org
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Push changes
+        if: steps.version.outputs.changed == 'true'
+        run: git push --follow-tags
+        
+      - name: Create GitHub Release
+        if: steps.version.outputs.changed == 'true'
+        run: |
+          gh release create "v${{ steps.version.outputs.version }}" \
+            --title "Release v${{ steps.version.outputs.version }}" \
+            --notes-file "${{ steps.release-notes.outputs.notes_file }}" \
+            --verify-tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Create Tracking Issue
+        if: steps.version.outputs.changed == 'true'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          PACKAGE="${{ inputs.package-name }}"
+          DEPENDENT_REPOS="${{ inputs.dependent-repos }}"
+          
+          # Create issue body
+          cat > issue-body.md << EOF
+          ## 🚀 Release Tracking: ${PACKAGE}@${VERSION}
+          
+          A new version has been released and needs to be propagated across the ecosystem.
+          
+          ### 📋 Release Information
+          - **Package**: \`${PACKAGE}\`
+          - **Version**: \`${VERSION}\`
+          - **Type**: ${{ steps.version.outputs.bump_type }} bump
+          - **Release**: https://github.com/${{ github.repository }}/releases/tag/v${VERSION}
+          - **Workflow**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          
+          ### ✅ Update Checklist
+          EOF
+          
+          # Add dependent repos to checklist
+          if [ -n "$DEPENDENT_REPOS" ]; then
+            echo "" >> issue-body.md
+            echo "The following repositories need to be updated:" >> issue-body.md
+            echo "" >> issue-body.md
+            IFS=',' read -ra REPOS <<< "$DEPENDENT_REPOS"
+            for repo in "${REPOS[@]}"; do
+              echo "- [ ] Update \`${repo}\` to use ${PACKAGE}@${VERSION}" >> issue-body.md
+            done
+          fi
+          
+          cat >> issue-body.md << EOF
+          
+          ### 🔄 Automation Status
+          - [ ] Package published to GitHub Packages
+          - [ ] Release notes generated
+          - [ ] Git tag created
+          - [ ] Dependent repositories notified
+          
+          ### 📝 Notes
+          This issue helps track the propagation of this release across the cloudflare-studio ecosystem.
+          It will be automatically closed when all dependent repositories have been updated.
+          
+          ---
+          *This issue was automatically created by the release workflow*
+          EOF
+          
+          # Create the issue
+          gh issue create \
+            --title "🚀 Release: ${PACKAGE}@${VERSION}" \
+            --body-file issue-body.md \
+            --label "release,automation,dependencies" \
+            --project "Release Tracking"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Notify Dependent Repositories
+        if: steps.version.outputs.changed == 'true' && inputs.dependent-repos != ''
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          PACKAGE="${{ inputs.package-name }}"
+          DEPENDENT_REPOS="${{ inputs.dependent-repos }}"
+          
+          # Send repository dispatch events
+          IFS=',' read -ra REPOS <<< "$DEPENDENT_REPOS"
+          for repo in "${REPOS[@]}"; do
+            echo "Notifying ${repo} about ${PACKAGE}@${VERSION}"
+            gh api repos/cloudflare-studio/${repo}/dispatches \
+              -f event_type=dependency_update \
+              -f client_payload[package]="${PACKAGE}" \
+              -f client_payload[version]="${VERSION}" \
+              -f client_payload[release_date]="$(date -u +%Y-%m-%d)" \
+              -f client_payload[bump_type]="${{ steps.version.outputs.bump_type }}" || true
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
