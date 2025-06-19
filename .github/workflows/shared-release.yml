@@ -78,8 +78,8 @@ jobs:
             echo "Version ${CURRENT_VERSION} is already tagged"
             echo "version=${CURRENT_VERSION}" >> $GITHUB_OUTPUT
             echo "changed=false" >> $GITHUB_OUTPUT
-          elif [ "$PUBLISHED_VERSION" = "$CURRENT_VERSION" ]; then
-            echo "Version ${CURRENT_VERSION} is already published"
+          else
+            echo "Version ${CURRENT_VERSION} needs to be released"
             # Need to bump version
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -123,9 +123,6 @@ jobs:
             echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
             echo "changed=true" >> $GITHUB_OUTPUT
             echo "bump_type=${BUMP_TYPE}" >> $GITHUB_OUTPUT
-          else
-            echo "version=${CURRENT_VERSION}" >> $GITHUB_OUTPUT
-            echo "changed=false" >> $GITHUB_OUTPUT
           fi
           
       - name: Generate Comprehensive Release Notes
