@@ -24,7 +24,7 @@ on:
         description: 'NPM token for publishing to npm registry'
 
 jobs:
-  release-package:
+  process:
     runs-on: ubuntu-latest
     permissions:
       contents: write
